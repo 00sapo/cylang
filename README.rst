@@ -27,7 +27,10 @@ called, it forces their use and removes the pure Python modules.
 Usage
 -----
 
-.. code:: python
+.. highlight:: python
+
+::
+
   from cylang import cylang
   cylang()
 

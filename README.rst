@@ -27,11 +27,9 @@ called, it forces their use and removes the pure Python modules.
 Usage
 -----
 
-``python
-from cylang import cylang
-cylang()
-
-``
+.. code:: python
+  from cylang import cylang
+  cylang()
 
 The ``cylang`` function accepts all keyword arguments of ``cythonize``, plus the following:
 

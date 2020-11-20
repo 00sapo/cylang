@@ -4,51 +4,58 @@ The main cylang module.
 Basic usage (compiles all the compilable modules):
 
 >>> from cylang import cylang
->>> cylang()
+>>> cylang.compile()
 
 """
-import sys
-import os
-import json
-import time
 import argparse
-from . import compiled
-from setuptools import Extension
-from cython import cythonize
+import json
+import os
+import sys
+import time
+from typing import Any, List
 
-MODULE_EXT = ['.so', '.dll']
+from Cython.Build import cythonize
+from Cython.Build.Cythonize import run_distutils
+from setuptools import Extension
+
+from . import compiled
+
+MODULE_EXT = (".so", ".dll")
 
 #: A db for the compiled modules
-_db_path = os.path.join(compiled.__path__, 'db.json')
+_db_path = os.path.join(compiled.__path__[0], "db.json")
 
-COMPILED_MODULES = json.load(open(_db_path))
+if os.path.exists(_db_path):
+    COMPILED_MODULES = json.load(open(_db_path))
+else:
+    COMPILED_MODULES = {}
 
 cylang_parser = argparse.ArgumentParser(description="Cylang command line.")
-cylang_parser.add_argument('--compile', action='store_true')
-cylang_parser.add_argument('--recompile-all', action='store_true')
-cylang_parser.add_argument('--remove-unused', action='store_true')
-cylang_parser.add_argument('--clean', action='store_true')
+cylang_parser.add_argument("--compile", action="store_true")
+cylang_parser.add_argument("--recompile-all", action="store_true")
+cylang_parser.add_argument("--remove-unused", action="store_true")
+cylang_parser.add_argument("--clean", action="store_true")
 
 
 def remove_unused():
     for module, module_info in COMPILED_MODULES.items():
-        if not os.path.exists(module_info['path']):
-            os.remove(module_info['compiled_path'])
+        if not os.path.exists(module_info["path"]):
+            os.remove(module_info["compiled_path"])
             del COMPILED_MODULES[module]
 
-    json.dump(COMPILED_MODULES, open(_db_path, 'wt'))
+    json.dump(COMPILED_MODULES, open(_db_path, "wt"))
 
 
 def clean():
-    for file in os.listdir(compiled.__path__):
+    for file in os.listdir(compiled.__path__[0]):
         if file.endswith(MODULE_EXT):
             os.remove(file)
     global COMPILED_MODULES
     COMPILED_MODULES = {}
-    json.dump(COMPILED_MODULES, open(_db_path, 'wt'))
+    json.dump(COMPILED_MODULES, open(_db_path, "wt"))
 
 
-def cylang(**kwargs):
+def compile(**kwargs):
     """
     Compiles the missing needed modules if '--compile' is provided.
     Compiles all the already compiled modules if '--compile' is provided.
@@ -58,16 +65,19 @@ def cylang(**kwargs):
     `cythonize`
     """
 
-    to_import = __search_needed_modules(kwargs.pop('whitelist', []),
-                                        kwargs.pop('blacklist', []),
-                                        kwargs.pop('only_subdir', ''))
-    cli_args = cylang_parser.parse_known_args()
+    to_import = __search_needed_modules(
+        kwargs.pop("whitelist", []),
+        kwargs.pop("blacklist", []),
+        kwargs.pop("only_subdir", ""),
+    )
+    cli_args: Any = cylang_parser.parse_known_args()[0]
     if cli_args.compile:
         to_compile = {}
         for module_name, module_info in to_import.items():
             compiled_module_info = COMPILED_MODULES.get(module_name)
-            if compiled_module_info is None or\
-                    compiled_module_info['last_edit'] < module_info['last_edit']:
+            if (compiled_module_info is None
+                    or compiled_module_info["last_edit"] <
+                    module_info["last_edit"]):
                 to_compile[module_name] = module_info
 
         __compile(to_compile, **kwargs)
@@ -85,7 +95,7 @@ def recompile_all(**kwargs):
     __compile(COMPILED_MODULES, **kwargs)
 
 
-def __compile(to_compile, **kwargs):
+def __compile(to_compile, **kwargs) -> List[Extension]:
     """
     Compiles the missing needed modules.
 
@@ -95,20 +105,22 @@ def __compile(to_compile, **kwargs):
     """
     extensions = []
     for module, module_info in to_compile.items():
-        extensions.append(Extension(module, [module_info['path']]))
-        # TODO
-        output_name = None
+        extensions.append(
+            Extension(module, [os.path.relpath(module_info["path"])]))
+        # TODO: compute a proper output_name
+        output_name = ""
         COMPILED_MODULES[module] = {
-            'path': module_info['path'],
-            'last_edit': time.time(),
-            'compiled_path': os.path.join(
-                compiled.__path__,
-                output_name
-            )
+            "path": module_info["path"],
+            "last_edit": time.time(),
+            "compiled_path": os.path.join(compiled.__path__[0], output_name),
         }
 
-    extensions = cythonize(extensions, build_dir=compiled.__path__, **kwargs)
-    json.dump(COMPILED_MODULES, open(_db_path, 'wt'))
+    extensions = cythonize(extensions,
+                           build_dir=compiled.__path__[0],
+                           compiler_directives={"language_level": 3},
+                           **kwargs)
+    run_distutils((compiled.__path__[0], extensions))
+    json.dump(COMPILED_MODULES, open(_db_path, "wt"))
     return extensions
 
 
@@ -117,7 +129,7 @@ def __import(to_import):
     Imports all the needed modules replacing those already imported from python
     files
     """
-    sys.path.insert(0, compiled.__path__)
+    sys.path.insert(0, compiled.__path__[0])
     for module in to_import.keys():
         # another option could be to use the 'compiled_path' in
         # COMPILED_MODULES[module]
@@ -126,7 +138,7 @@ def __import(to_import):
         __import__(module)
 
 
-def __search_needed_modules(whitelist=[], blacklist=[], only_subdir=''):
+def __search_needed_modules(whitelist=[], blacklist=[], only_subdir=""):
     """
     TODO (minor): do this before having imported everything!
 
@@ -139,16 +151,19 @@ def __search_needed_modules(whitelist=[], blacklist=[], only_subdir=''):
     `blacklist` are added.
 
     If `only_subdir` is set, only modules in the same dir and subdirs
-    of the specified path are considered for the addition.
+    of the specified path are considered for the addition. This is similar to
+    `Cython.Build.Cythonize.cython_compile(...)`
 
     `whitelist`, `blacklist` and `only_subdir` are used in a `or` fashion.
 
     """
 
     out = {}
-    for module_name, module in sys.modules:
+    for module_name, module in sys.modules.items():
+        if module_name == "cython":
+            continue
         needed = False
-        if hasattr(module, '__file__') and module.__file__:
+        if hasattr(module, "__file__") and module.__file__:
             if not module.__file__.endswith(MODULE_EXT):
                 # this is a compilable module
                 needed = True
@@ -156,13 +171,13 @@ def __search_needed_modules(whitelist=[], blacklist=[], only_subdir=''):
                     needed = False
                 if whitelist and module not in whitelist:
                     needed = False
-                if only_subdir and not __is_subdir(module.__file__,
-                                                   only_subdir):
+                if only_subdir and\
+                        not __is_subdir(module.__file__, only_subdir):
                     needed = False
                 if needed:
                     out[module_name] = {
-                        'path': module.__file__,
-                        'last_edit': os.path.getmtime(module.__file__)
+                        "path": module.__file__,
+                        "last_edit": os.path.getmtime(module.__file__),
                     }
 
     return out
